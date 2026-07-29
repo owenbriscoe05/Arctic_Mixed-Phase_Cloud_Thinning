@@ -1,8 +1,8 @@
 # Data
 data/
-./avhrr_cloud_phase_urls_*
+avhrr_cloud_phase_urls_*
 Miniconda3-latest-Linux-x86_64.sh
-./modis_urls_*
+modis_urls_*
 
 # Distracting scripts
 Untitled-2.py
