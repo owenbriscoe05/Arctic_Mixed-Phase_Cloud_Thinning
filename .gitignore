@@ -9,3 +9,8 @@ MPC/
 Untitled-2.py
 downloads.sh
 earthdata_login.py
+
+# Other
+.env
+.DS_Store
+EOF
