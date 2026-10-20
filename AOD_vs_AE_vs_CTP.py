@@ -1,3 +1,9 @@
+"""Exploratory aerosol/cloud comparison using phase-climatological AE anomalies.
+
+The AE reference is exported by analysis.ipynb as data_phase_climatology.nc.
+Daily statistics are a separate product and are not used as the AE reference.
+"""
+
 import xarray as xr
 import pandas as pd
 import numpy as np
@@ -30,7 +36,7 @@ def get_avhrr_temp_and_phase(year, month, day, bbox=[-35, 10, 43, 71]):
     return sliced_ds["ctt_asc"].mean(dim='time'), sliced_ds["cph_asc"].max(dim='time')
 
 def get_modis_aerosol_data(year, month, day, satellite="Aqua", bbox=[-35, 10, 43, 71]):
-    """Loads ungridded MODIS L2 HDF files, matches baseline, calculates AE anomaly."""
+    """Load AOD and pixel AE minus the matching phase climatological mean."""
     target_date = datetime(year, month, day)
     doy_str = target_date.strftime('%Y%j') 
     date_str = f"{year}{month:02d}{day:02d}"
@@ -51,14 +57,19 @@ def get_modis_aerosol_data(year, month, day, satellite="Aqua", bbox=[-35, 10, 43
         print(f"MODIS load failed: No files found matching {sat_prefix}*{doy_str}*.hdf")
         return None, None
     
-    baseline_path = f"{MODIS_BASELINE_DIR}{satellite}/{date_str}/data_daily_stats.nc"
+    baseline_path = f"{MODIS_BASELINE_DIR}{satellite}/{date_str}/data_phase_climatology.nc"
     
     try:
-        baseline_ds = xr.open_dataset(baseline_path, engine="netcdf4")
+        with xr.open_dataset(baseline_path, engine="netcdf4") as reference:
+            # Require the separately exported climatology; never substitute daily statistics.
+            if "mean" not in reference:
+                raise ValueError("Climatology file must contain the phase mean variable 'mean'")
+            baseline_ds = reference.load()
         if 'Latitude' in baseline_ds.dims:
             baseline_ds = baseline_ds.rename({'Latitude': 'lat', 'Longitude': 'lon'})
     except Exception as e:
-        print(f"Baseline load failed: {e}")
+        print(f"Phase climatology load failed: {e}. "
+              "Export references with: python scripts/run_analysis.py climatology")
         return None, None
 
     # Lists to hold the flattened data from all swaths
@@ -113,9 +124,10 @@ def get_modis_aerosol_data(year, month, day, satellite="Aqua", bbox=[-35, 10, 43
         dims=['point']
     )
 
-    # Calculate Anomaly by interpolating the Baseline grid to the scatter points
-    baseline_ae_interp = baseline_ds['Angstrom_mean'].interp(lat=modis_ae_da.lat, lon=modis_ae_da.lon, method='nearest')
-    ae_anomaly = modis_ae_da - baseline_ae_interp
+    # Match the same phase climatology used for the daily plume masks to each pixel.
+    baseline_ae_interp = baseline_ds['mean'].interp(lat=modis_ae_da.lat, lon=modis_ae_da.lon, method='nearest')
+    ae_anomaly = (modis_ae_da - baseline_ae_interp).rename("ae_anomaly")
+    ae_anomaly.attrs.update(reference="phase_climatology", reference_file=baseline_path)
     
     return modis_aod_da, ae_anomaly
 
@@ -125,7 +137,7 @@ def plot_aerosol_ice_correlation(df, title, savetitle, savepath="./data/aerosol_
     
     # AXIS 1: AOD Scatter Plot (Blue)
     color1 = 'tab:blue'
-    ax1.set_xlabel('Angström Exponent Anomaly', fontsize=14)
+    ax1.set_xlabel('AE Anomaly (Pixel − Phase Climatology)', fontsize=14)
     ax1.set_ylabel('Aerosol Optical Depth (Plume Thickness)', fontsize=14, color=color1)
     
     ax1.scatter(df['ae_anomaly'], df['aod'], color=color1, alpha=0.3, s=15, label='AOD Pixel')
@@ -232,7 +244,7 @@ def analyze_plume_density_effect(volcano, year, month, day, satellite="Aqua", te
     fig, ax1 = plt.subplots(figsize=(12, 7))
     
     color1 = 'tab:blue'
-    ax1.set_xlabel('Angström Exponent Anomaly (Negative = Larger Particles →)', fontsize=14)
+    ax1.set_xlabel('AE Anomaly (Pixel − Phase Climatology)', fontsize=14)
     ax1.set_ylabel('Average AOD (Plume Thickness)', fontsize=14, color=color1)
     
     # Plot the BINNED AOD as a scatter or a dashed line
@@ -268,4 +280,5 @@ def analyze_plume_density_effect(volcano, year, month, day, satellite="Aqua", te
 # EXECUTION
 # ==========================================
 # Example: Running Eja Phase 1 (April 14th) using the Aqua satellite
-analyze_plume_density_effect("Eja", 2010, 4, 17, satellite="Aqua")
+if __name__ == "__main__":
+    analyze_plume_density_effect("Eja", 2010, 4, 17, satellite="Aqua")

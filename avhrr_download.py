@@ -1,4 +1,8 @@
+"""Download ESA cloud_cci L3U files into the original daily-data directory."""
+
+import argparse
 import os
+from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
@@ -16,26 +20,34 @@ def download_file(url, dest_folder):
         return
 
     print(f"Downloading: {filename}")
-    with requests.get(url, stream=True) as r:
+    partial_path = filepath + ".part"
+    with requests.get(url, stream=True, timeout=120) as r:
         r.raise_for_status()
-        with open(filepath, 'wb') as f:
+        with open(partial_path, 'wb') as f:
             for chunk in r.iter_content(chunk_size=8192):
                 f.write(chunk)
+    os.replace(partial_path, filepath)
 
-def main():
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--months", nargs="+", choices=[f"{m:02d}" for m in range(1, 13)],
+                        default=["04", "05"], help="Include 06 to cover June baseline dates.")
+    args = parser.parse_args(argv)
+    if not Path("analysis.ipynb").is_file():
+        parser.error("Run from the Arctic_MPC repository root to preserve relative paths.")
     base_url = "https://public.satproj.klima.dwd.de/data/ESA_Cloud_CCI/CLD_PRODUCTS/v3.0/L3U/AVHRR-PM/"
     years = [str(y) for y in range(2007, 2015)] # 2007 through 2014
-    months = ['04', '05']     # April and May
+    months = args.months     # Historical default: April and May
     
     download_dir = "./data/raw/Cloud_Properties_Daily/"
     os.makedirs(download_dir, exist_ok=True)
 
     try:
-        response = requests.get(base_url)
+        response = requests.get(base_url, timeout=120)
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
         print(f"Failed to access base URL: {e}")
-        return
+        raise
 
     # Find all the NOAA satellite subfolders
     soup = BeautifulSoup(response.text, 'html.parser')
@@ -52,13 +64,13 @@ def main():
                 month_url = urljoin(sat_url, f"{year}/{month}/")
                 
                 try:
-                    response = requests.get(month_url)
+                    response = requests.get(month_url, timeout=120)
                     # If this satellite wasn't operating this month, quietly skip it
                     if response.status_code == 404:
                         continue 
                     response.raise_for_status()
                 except requests.exceptions.RequestException:
-                    continue
+                    raise
 
                 print(f"\n--- Scanning {sat.strip('/')} for {year}-{month} ---")
                 month_soup = BeautifulSoup(response.text, 'html.parser')
@@ -77,17 +89,18 @@ def main():
                     elif href.endswith('/') and href[:-1].isdigit():
                         day_url = urljoin(month_url, href)
                         try:
-                            day_response = requests.get(day_url)
+                            day_response = requests.get(day_url, timeout=120)
+                            day_response.raise_for_status()
                             if day_response.status_code == 200:
                                 day_soup = BeautifulSoup(day_response.text, 'html.parser')
                                 
                                 for day_link in day_soup.find_all('a'):
                                     day_href = day_link.get('href')
-                                    if day_href.endswith('.nc'):
+                                    if day_href and day_href.endswith('.nc'):
                                         file_url = urljoin(day_url, day_href)
                                         download_file(file_url, download_dir)
                         except requests.exceptions.RequestException:
-                            pass
+                            raise
 
     print("\nAll daily L3U downloads complete!")
 

@@ -1,3 +1,9 @@
+"""Exploratory aerosol/cloud comparison using phase-climatological AE anomalies.
+
+The AE reference is exported by analysis.ipynb as data_phase_climatology.nc.
+Daily statistics are a separate product and are not used as the AE reference.
+"""
+
 import xarray as xr
 import pandas as pd
 import numpy as np
@@ -30,7 +36,7 @@ def get_avhrr_temp_and_phase(year, month, day, bbox=[-35, 10, 43, 71]):
     return sliced_ds["ctt_asc"].mean(dim='time'), sliced_ds["cph_asc"].max(dim='time')
 
 def get_modis_aerosol_data(year, month, day, satellite="Aqua", bbox=[-35, 10, 43, 71]):
-    """Loads ungridded MODIS L2 HDF files, matches baseline, calculates AE anomaly."""
+    """Load AOD, phase-climatological AE anomalies, and unchanged raw AE."""
     target_date = datetime(year, month, day)
     doy_str = target_date.strftime('%Y%j') 
     date_str = f"{year}{month:02d}{day:02d}"
@@ -49,17 +55,22 @@ def get_modis_aerosol_data(year, month, day, satellite="Aqua", bbox=[-35, 10, 43
         
     if not actual_files:
         print(f"MODIS load failed: No files found matching {sat_prefix}*{doy_str}*.hdf")
-        return None, None
+        return None, None, None
     
-    baseline_path = f"{MODIS_BASELINE_DIR}{satellite}/{date_str}/data_daily_stats.nc"
+    baseline_path = f"{MODIS_BASELINE_DIR}{satellite}/{date_str}/data_phase_climatology.nc"
     
     try:
-        baseline_ds = xr.open_dataset(baseline_path, engine="netcdf4")
+        with xr.open_dataset(baseline_path, engine="netcdf4") as reference:
+            # Require the separately exported climatology; never substitute daily statistics.
+            if "mean" not in reference:
+                raise ValueError("Climatology file must contain the phase mean variable 'mean'")
+            baseline_ds = reference.load()
         if 'Latitude' in baseline_ds.dims:
             baseline_ds = baseline_ds.rename({'Latitude': 'lat', 'Longitude': 'lon'})
     except Exception as e:
-        print(f"Baseline load failed: {e}")
-        return None, None
+        print(f"Phase climatology load failed: {e}. "
+              "Export references with: python scripts/run_analysis.py climatology")
+        return None, None, None
 
     # Lists to hold the flattened data from all swaths
     all_lats, all_lons, all_aod, all_ae = [], [], [], []
@@ -97,7 +108,7 @@ def get_modis_aerosol_data(year, month, day, satellite="Aqua", bbox=[-35, 10, 43
 
     if not all_aod:
         print("No valid MODIS data found inside the bounding box.")
-        return None, None
+        return None, None, None
 
     # Convert the collected swath data into an xarray DataArray for easier interpolation later
     # We create a new, unstructured 'point' dimension for the swath data
@@ -113,9 +124,10 @@ def get_modis_aerosol_data(year, month, day, satellite="Aqua", bbox=[-35, 10, 43
         dims=['point']
     )
 
-    # Calculate Anomaly by interpolating the Baseline grid to the scatter points
-    baseline_ae_interp = baseline_ds['Angstrom_mean'].interp(lat=modis_ae_da.lat, lon=modis_ae_da.lon, method='nearest')
-    ae_anomaly = modis_ae_da - baseline_ae_interp
+    # Match the phase climatological reference to each pixel.
+    baseline_ae_interp = baseline_ds['mean'].interp(lat=modis_ae_da.lat, lon=modis_ae_da.lon, method='nearest')
+    ae_anomaly = (modis_ae_da - baseline_ae_interp).rename("ae_anomaly")
+    ae_anomaly.attrs.update(reference="phase_climatology", reference_file=baseline_path)
     
     return modis_aod_da, ae_anomaly, modis_ae_da
 
@@ -328,6 +340,7 @@ PHASES = {
     ]
 }
 
-# Uncomment the loop below to run the full phase aggregation
-for phase_name, date_list in PHASES.items():
-    aggregate_plume_density_phase("Eja", phase_name, date_list, satellite="Aqua")
+# Running this file preserves the historical phase labels and destinations.
+if __name__ == "__main__":
+    for phase_name, date_list in PHASES.items():
+        aggregate_plume_density_phase("Eja", phase_name, date_list, satellite="Aqua")

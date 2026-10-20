@@ -1,0 +1,25 @@
+# Direct dependency versions from the working MPC environment (2026-10-20).
+# This is a portable environment specification, not a transitive lockfile.
+name: arctic-mpc
+channels:
+  - defaults
+dependencies:
+  - python=3.14.2
+  - pip
+  - numpy=2.4.1
+  - pandas=2.3.3
+  - xarray=2025.10.1
+  - matplotlib=3.10.8
+  - netcdf4=1.7.4
+  - dask=2025.12.0
+  - pip:
+      - scipy==1.17.0
+      - cartopy==0.25.0
+      - h5netcdf==1.8.1
+      - pydap==3.5.8
+      - earthaccess==0.16.0
+      - requests==2.32.5
+      - beautifulsoup4==4.14.3
+      - ipykernel==7.2.0
+      - jupyterlab==4.5.3
+      - nbformat==5.10.4

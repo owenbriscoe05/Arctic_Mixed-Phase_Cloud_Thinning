@@ -13,4 +13,12 @@ earthdata_login.py
 # Other
 .env
 .DS_Store
-EOF
+
+# Python environments, notebook checkpoints, and interrupted downloads
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
+*.part
+.pytest_cache/
+.recovery/
